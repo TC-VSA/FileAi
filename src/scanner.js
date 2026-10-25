@@ -1,0 +1,16 @@
+import {analyzeName,extension} from './analysis.js';
+export class Scanner{
+ constructor(onProgress=()=>{}){this.onProgress=onProgress;this.cancelled=false;this.paused=false;this.seen=new Set()}
+ cancel(){this.cancelled=true} pause(){this.paused=true} resume(){this.paused=false}
+ async wait(){while(this.paused&&!this.cancelled)await new Promise(r=>setTimeout(r,100));if(this.cancelled)throw new DOMException('Scan cancelled','AbortError')}
+ async scanHandles(roots,sessionId,settings={skipOfficeTemp:true}){const records=[],errors=[];let folders=0,skipped=0;
+  const walk=async(handle,root,path='')=>{await this.wait();folders++;for await(const [name,child] of handle.entries()){await this.wait();const rel=path?`${path}/${name}`:name;this.onProgress({root:root.name,folder:path,file:name,files:records.length,folders,skipped});
+   if(child.kind==='directory'){try{await walk(child,root,rel)}catch(e){errors.push(this.err(sessionId,root.name,'FOLDER',name,rel,e))}}
+   else{if(settings.skipOfficeTemp&&name.startsWith('~$')){skipped++;continue}const key=`${root.name}/${rel}`.toLowerCase();if(this.seen.has(key)){skipped++;continue}this.seen.add(key);try{const f=await child.getFile(),a=analyzeName(name);records.push({id:crypto.randomUUID(),sessionId,root:root.name,name,extension:extension(name),mime:f.type||'Not available from browser file metadata',size:f.size,lastModified:f.lastModified,parent:path.split('/').pop()||root.name,relativePath:rel,folderPath:path,depth:path?path.split('/').length:0,handle:child,namingStatus:a.issues.length?'Issue':'Healthy',issues:a.issues,suggestion:a.suggestion,confidence:a.confidence,risk:a.risk,scanStatus:'Stored'})}catch(e){errors.push(this.err(sessionId,root.name,'FILE',name,rel,e))}}
+  }};
+  for(const root of roots){try{await walk(root.handle,root,'')}catch(e){errors.push(this.err(sessionId,root.name,'ROOT',root.name,root.name,e))}}
+  return {records,errors,folders,skipped,status:this.cancelled?'CANCELLED':errors.length?'PASS WITH WARNINGS':'PASS'}
+ }
+ async scanFiles(fileList,sessionId){const records=[],errors=[];for(const f of fileList){try{const rel=f.webkitRelativePath||f.name;if(f.name.startsWith('~$'))continue;const parts=rel.split('/'),root=parts.shift()||'Uploaded folder',a=analyzeName(f.name);parts.pop();records.push({id:crypto.randomUUID(),sessionId,root,name:f.name,extension:extension(f.name),mime:f.type||'Not available from browser file metadata',size:f.size,lastModified:f.lastModified,parent:parts.at(-1)||root,relativePath:rel,folderPath:parts.join('/'),depth:parts.length,handle:null,namingStatus:a.issues.length?'Issue':'Healthy',issues:a.issues,suggestion:a.suggestion,confidence:a.confidence,risk:a.risk,scanStatus:'Stored'})}catch(e){errors.push(this.err(sessionId,'Fallback','FILE',f.name,f.webkitRelativePath,e))}}return{records,errors,folders:new Set(records.map(r=>r.folderPath)).size,skipped:0,status:errors.length?'PASS WITH WARNINGS':'PASS'}}
+ err(sessionId,root,itemType,fileName,path,e){return{id:crypto.randomUUID(),timestamp:Date.now(),sessionId,root,stage:'SCAN',itemType,fileName,path,errorName:e?.name||'Error',message:e?.message||String(e),attempt:1,status:'Open',action:'Review permission or availability'}}
+}

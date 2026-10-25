@@ -1,0 +1,10 @@
+services:
+  nexus:
+    build: .
+    ports: ["4173:4173"]
+    environment: ["PORT=4173"]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:4173/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
